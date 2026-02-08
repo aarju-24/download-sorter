@@ -6,12 +6,12 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 # =====================================================
-# BOOT DELAY (let Windows settle)
+# BOOT DELAY
 # =====================================================
 time.sleep(15)
 
 # =====================================================
-# LOGGING (absolute path)
+# LOGGING
 # =====================================================
 LOG_FILE = r"D:\startup_log.txt"
 
@@ -21,7 +21,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-logging.info("DOWNLOAD SORTER STARTED")
+logging.info("DOWNLOAD SORTER STARTED (SAFE VERSION)")
 
 # =====================================================
 # TARGET FOLDER
@@ -31,6 +31,16 @@ DOWNLOADS = Path(r"C:\Users\arzoo\Downloads")
 if not DOWNLOADS.exists():
     logging.error("Downloads folder not found")
     raise SystemExit
+
+# =====================================================
+# TEMP DOWNLOAD EXTENSIONS (CRITICAL)
+# =====================================================
+TEMP_EXTENSIONS = {
+    ".crdownload",  # Chrome
+    ".part",        # Firefox
+    ".tmp",         # Edge / system
+    ".download"
+}
 
 # =====================================================
 # EXTENSION GROUPS
@@ -52,16 +62,22 @@ ebook_exts = {".epub", ".mobi", ".azw"}
 database_exts = {".db", ".sqlite", ".mdb"}
 
 # =====================================================
-# SAFE FILE READY CHECK (CRITICAL FIX)
+# WAIT UNTIL FILE IS FULLY DOWNLOADED
 # =====================================================
-def wait_until_ready(path, timeout=15):
+def wait_until_stable(path, timeout=60):
+    last_size = -1
     start = time.time()
+
     while time.time() - start < timeout:
         try:
-            with open(path, "rb"):
+            current_size = path.stat().st_size
+            if current_size == last_size:
                 return True
-        except Exception:
-            time.sleep(0.5)
+            last_size = current_size
+            time.sleep(1)
+        except FileNotFoundError:
+            return False
+
     return False
 
 # =====================================================
@@ -95,7 +111,7 @@ def get_folder(extension):
     return "Others"
 
 # =====================================================
-# MOVE FILE (ROBUST)
+# MOVE FILE (SAFE)
 # =====================================================
 def move_file(path):
     try:
@@ -104,23 +120,23 @@ def move_file(path):
         if not file_path.exists() or file_path.is_dir():
             return
 
-        if not wait_until_ready(file_path):
-            logging.warning(f"File not ready: {file_path.name}")
+        # Ignore temp download files
+        if any(ext in file_path.name.lower() for ext in TEMP_EXTENSIONS):
             return
 
-        # SAFER extension detection
+        if not wait_until_stable(file_path):
+            logging.warning(f"File not stable: {file_path.name}")
+            return
+
         extension = "".join(file_path.suffixes).lower()
-
-        logging.info(f"Detected extension: {extension} for {file_path.name}")
-
         folder_name = get_folder(extension)
+
         destination_dir = DOWNLOADS / folder_name
         destination_dir.mkdir(exist_ok=True)
 
         destination = destination_dir / file_path.name
-
         if destination.exists():
-            return  # avoid overwrite
+            return
 
         shutil.move(str(file_path), str(destination))
         logging.info(f"Moved: {file_path.name} -> {folder_name}")
@@ -129,22 +145,20 @@ def move_file(path):
         logging.error(f"Error processing {path}: {e}")
 
 # =====================================================
-# SORT EXISTING FILES (ON STARTUP)
+# SORT EXISTING FILES (SAFE)
 # =====================================================
-logging.info("### NEW VERSION WITH IPYNB FIX IS RUNNING ###")
-
 logging.info("Sorting existing files on startup")
 
 for item in DOWNLOADS.iterdir():
     move_file(item)
 
 # =====================================================
-# WATCHDOG HANDLER
+# WATCHDOG HANDLER (IMPORTANT CHANGE)
 # =====================================================
 class FolderHandler(FileSystemEventHandler):
-    def on_created(self, event):
+    def on_moved(self, event):
         if not event.is_directory:
-            move_file(event.src_path)
+            move_file(event.dest_path)
 
 # =====================================================
 # START WATCHDOG
@@ -153,7 +167,7 @@ observer = Observer()
 observer.schedule(FolderHandler(), str(DOWNLOADS), recursive=False)
 observer.start()
 
-logging.info("Watching Downloads folder in real time")
+logging.info("Watching Downloads folder (SAFE MODE)")
 
 # =====================================================
 # KEEP ALIVE
